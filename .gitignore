@@ -1,9 +1,11 @@
 # Python
-.venv/
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
+
+# uv
+.venv/
 
 # Data
 datasets/
