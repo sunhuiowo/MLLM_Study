@@ -1,0 +1,16 @@
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Data
+datasets/
+
+# IDE / System
+.DS_Store
+.claude/
+
+# Logs
+*.log
