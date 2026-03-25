@@ -9,25 +9,20 @@ import sys
 import argparse
 import subprocess
 import shutil
+import datetime
 from pathlib import Path
 
 # ========== 配置区域 ==========
 DEFAULT_CONFIG = {
     # 模型配置
     "model": "./models/Qwen/Qwen3___5-0___8B",
+    "model_author": None,
+    "model_name": None,
     
-    # # 数据配置
-    # "dataset": [
-    #     "AI-ModelScope/alpaca-gpt4-data-zh#500",
-    #     "AI-ModelScope/alpaca-gpt4-data-en#500",
-    #     "swift/self-cognition#500",
-    #     "AI-ModelScope/LaTeX_OCR:human_handwrite#2000",
-    # ],
-
     # 数据配置
-    "dataset": [
-        "./datasets/VLM/Safety_Vests_Detection_Dataset_YOLO"
-    ],
+    "dataset": ["./datasets/VLM/Safety_Vests_Detection_Dataset_YOLO"],
+    "load_from_cache_file": True,
+    "group_by_length": True,
 
     # 训练配置
     "tuner_type": "lora",
@@ -61,7 +56,7 @@ DEFAULT_CONFIG = {
     
     # WandB 配置
     "report_to": "wandb",
-    "run_name": "qwen3.5-sft",
+    "run_name": None,  # 👈 改为 None，由代码动态生成
     
     # 数据处理
     "dataset_num_proc": 4,      # Mac 改为 1
@@ -70,8 +65,9 @@ DEFAULT_CONFIG = {
     "group_by_length": True,
     
     # 高级配置
-    "deepspeed": None,  #  # Mac 改为 None
+    "deepspeed": None,  # Mac 改为 None, CUDA 默认 zero2
     "torch_compile": False,
+    "gradient_checkpointing": True,  # 👈 新增：梯度检查点（节省显存）
     
     # Qwen3.5 专用
     "add_non_thinking_prefix": True,
@@ -112,8 +108,23 @@ def apply_platform_defaults(args):
             args.deepspeed = None
         if args.max_pixels > 451584:
             args.max_pixels = 451584
+            
+    elif platform == "cpu":
+        print("🖥️ 检测到 CPU 平台，应用低资源配置")
+        args.torch_dtype = "float32"
+        args.per_device_train_batch_size = 1
+        args.per_device_eval_batch_size = 1
+        args.dataloader_num_workers = 0
+        args.dataset_num_proc = 1
+        args.deepspeed = None
+        args.max_pixels = 200704
+        args.gradient_checkpointing = False  # CPU 不需要
+        
     else:
         print("🐧 检测到 Linux/CUDA 平台，使用完整配置")
+        # CUDA 平台默认启用 deepspeed zero2（如果未指定）
+        if args.deepspeed is None:
+            args.deepspeed = "zero2"
     
     return args
 
@@ -159,6 +170,11 @@ def build_command(args):
         "--torch_compile", str(args.torch_compile).lower(),
     ])
     
+    # 👇 新增：梯度检查点配置
+    if hasattr(args, 'gradient_checkpointing'):
+        cmd.extend(["--gradient_checkpointing", str(args.gradient_checkpointing).lower()])
+  
+    
     # Qwen3.5 专用参数
     if args.add_non_thinking_prefix:
         cmd.extend(["--add_non_thinking_prefix", "true"])
@@ -199,8 +215,10 @@ def set_environment(args):
         os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
         os.environ["NCCL_IB_DISABLE"] = "1"
         os.environ["NCCL_P2P_DISABLE"] = "1"
+        os.environ["NPROC_PER_NODE"] = "1"
+        os.environ["CUDA_VISIBLE_DEVICES"] = "0"
     else:
-        # Mac 环境
+        # Mac / CPU 环境
         os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
         os.environ["PYTORCH_MPS_HIGH_WATERMARK_RATIO"] = "0.0"
         os.environ["TOKENIZERS_PARALLELISM"] = "false"
@@ -212,34 +230,34 @@ def set_environment(args):
     os.environ["WANDB_WATCH"] = "false"
     os.environ["WANDB_LOG_MODEL"] = "false"
     
-    # 图片路径（如果有本地数据集）
-    # 图片路径自动推导（修复版）
+    # 🔧 图片路径自动推导（修复版）
     if hasattr(args, 'dataset') and args.dataset:
         for ds in args.dataset:
-            ds_path = Path(ds).resolve()  # 转为绝对路径
+            # 跳过远程数据集
+            if not ds.startswith(("./", "/", "~")):
+                continue
+                
+            ds_path = Path(ds).expanduser().resolve()
             
             if ds_path.is_dir():
-                # 情况1: ds 是数据集目录（如 ./datasets/xxx/）
-                # ROOT_IMAGE_DIR 应该是该目录本身（包含 images/ 子目录）
+                # 数据集是目录：ROOT_IMAGE_DIR = 目录本身
                 root_image_dir = ds_path
             elif ds_path.is_file():
-                # 情况2: ds 是数据文件（如 ./datasets/xxx/train.jsonl）
-                # ROOT_IMAGE_DIR 应该是文件所在目录
+                # 数据集是文件：ROOT_IMAGE_DIR = 文件所在目录
                 root_image_dir = ds_path.parent
             else:
-                # 情况3: 远程数据集（如 AI-ModelScope/xxx），跳过
-                continue
+                continue  # 路径不存在，跳过
             
             os.environ["ROOT_IMAGE_DIR"] = str(root_image_dir)
             print(f"🔧 设置 ROOT_IMAGE_DIR={root_image_dir}")
             
-            # 验证 images 子目录是否存在（可选调试）
+            # 调试信息
             images_dir = root_image_dir / "images"
             if images_dir.exists():
-                print(f"✅ 找到 images 目录: {images_dir}")
+                img_count = len(list(images_dir.glob("*.jpg")) + list(images_dir.glob("*.png")))
+                print(f"✅ 找到 images 目录，共 {img_count} 张图片")
             else:
                 print(f"⚠️ 未找到 images 目录: {images_dir}")
-                print(f"   请确认数据集结构: {root_image_dir}/images/*.jpg")
             break
 
 
@@ -334,6 +352,7 @@ def main():
     # ========== 高级配置 ==========
     parser.add_argument("--deepspeed", type=str, default=DEFAULT_CONFIG["deepspeed"], choices=["zero2", "zero3", None])
     parser.add_argument("--torch_compile", type=bool, default=DEFAULT_CONFIG["torch_compile"])
+    parser.add_argument("--gradient_checkpointing", type=bool, default=DEFAULT_CONFIG["gradient_checkpointing"])  # 👈 新增
     
     # ========== Qwen3.5 专用 ==========
     parser.add_argument("--add_non_thinking_prefix", type=bool, default=DEFAULT_CONFIG["add_non_thinking_prefix"])
@@ -351,6 +370,11 @@ def main():
     print("\n" + "=" * 60)
     print("🚀 Qwen3.5 LoRA 微调训练")
     print("=" * 60 + "\n")
+    
+    # 👈 动态生成 run_name（如果未手动指定）
+    if args.run_name is None or args.run_name == DEFAULT_CONFIG["run_name"]:
+        args.run_name = f"qwen3.5-sft-{datetime.datetime.now().strftime('%Y%m%d-%H%M%S')}"
+        print(f"📊 自动生成 run_name: {args.run_name}")
     
     # 1. 自动平台适配
     if args.auto_platform:
@@ -379,7 +403,7 @@ def main():
     if args.report_to in ["wandb", "all"]:
         print(f"📊 WandB 项目：{os.environ.get('WANDB_PROJECT', 'qwen3.5-sft')}")
         print(f"📊 WandB 运行名：{args.run_name}")
-        print(f"📊 查看面板：https://wandb.ai/")
+        print(f"📊 查看面板：https://wandb.ai/  ")
         print()
     
     # 7. Dry Run 模式
