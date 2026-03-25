@@ -12,12 +12,21 @@ TEMPLATES = [
 
 
 def load_categories_from_data_yaml(dataset_path: Path) -> List[str]:
-    """从 data.yaml 读取类别名称列表"""
+    """从 data.yaml 读取类别名称列表，自动识别编码"""
     yaml_path = dataset_path / "data.yaml"
     if not yaml_path.exists():
         return []
-    with open(yaml_path, "r", encoding="utf-8") as f:
-        data = yaml.safe_load(f)
+
+    # 尝试多种编码，防止服务器上 data.yaml 编码不一致
+    for encoding in ["utf-8", "gbk", "gb2312", "latin1"]:
+        try:
+            with open(yaml_path, "r", encoding=encoding) as f:
+                data = yaml.safe_load(f)
+            break
+        except UnicodeDecodeError:
+            continue
+
+    names = data.get("names", []) if data else []
     names = data.get("names", []) if data else []
     # names 可能是 list 或 dict
     if isinstance(names, list):
