@@ -83,6 +83,7 @@ def main():
     parser.add_argument("--output", type=str, required=True, help="VLM输出根目录")
     parser.add_argument("--label-map", type=str, default=None, help="label_map.yaml路径")
     parser.add_argument("--no-copy-images", action="store_true", help="不拷贝图片")
+    parser.add_argument("--select", type=str, default=None, help="只处理指定的数据集（目录名），不指定则处理所有")
     args = parser.parse_args()
 
     input_root = Path(args.input)
@@ -99,6 +100,9 @@ def main():
 
     for sub_dataset in sorted(input_root.iterdir()):
         if not sub_dataset.is_dir():
+            continue
+        # 如果指定了 --select，只处理匹配的数据集
+        if args.select and sub_dataset.name != args.select:
             continue
         stats = process_dataset(sub_dataset, output_root, label_mapper, copy_images)
         total_images += stats.total_images
