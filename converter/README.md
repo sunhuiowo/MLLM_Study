@@ -117,10 +117,22 @@ qwen_train.jsonl         ← 重新生成的 ms-SWIFT grounding 格式
 运行 `main.py`，同时输出 `annotations.jsonl` + `vlm_train.jsonl` + 图片拷贝：
 
 ```bash
-# 基本用法（会拷贝图片）
+# 基本用法（会拷贝图片，处理所有数据集）
 PYTHONPATH=. python converter/main.py \
     --input datasets/YOLO \
     --output datasets/VLM
+
+# 只处理指定的数据集（当 YOLO 文件夹包含多个子数据集时）
+PYTHONPATH=. python converter/main.py \
+    --input datasets/YOLO \
+    --output datasets/VLM \
+    --select Safety_Vests_Detection_Dataset_YOLO
+
+# 只处理另一个数据集
+PYTHONPATH=. python converter/main.py \
+    --input datasets/YOLO \
+    --output datasets/VLM \
+    --select vest_v1i_yolov11
 
 # 不拷贝图片（仅生成标注文件）
 PYTHONPATH=. python converter/main.py \
