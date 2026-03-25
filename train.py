@@ -213,13 +213,34 @@ def set_environment(args):
     os.environ["WANDB_LOG_MODEL"] = "false"
     
     # 图片路径（如果有本地数据集）
+    # 图片路径自动推导（修复版）
     if hasattr(args, 'dataset') and args.dataset:
         for ds in args.dataset:
-            if ds.startswith("./"):
-                ds_dir = Path(ds).parent.resolve()
-                os.environ["ROOT_IMAGE_DIR"] = str(ds_dir)
-                print(f"🔧 设置 ROOT_IMAGE_DIR={ds_dir}")
-                break
+            ds_path = Path(ds).resolve()  # 转为绝对路径
+            
+            if ds_path.is_dir():
+                # 情况1: ds 是数据集目录（如 ./datasets/xxx/）
+                # ROOT_IMAGE_DIR 应该是该目录本身（包含 images/ 子目录）
+                root_image_dir = ds_path
+            elif ds_path.is_file():
+                # 情况2: ds 是数据文件（如 ./datasets/xxx/train.jsonl）
+                # ROOT_IMAGE_DIR 应该是文件所在目录
+                root_image_dir = ds_path.parent
+            else:
+                # 情况3: 远程数据集（如 AI-ModelScope/xxx），跳过
+                continue
+            
+            os.environ["ROOT_IMAGE_DIR"] = str(root_image_dir)
+            print(f"🔧 设置 ROOT_IMAGE_DIR={root_image_dir}")
+            
+            # 验证 images 子目录是否存在（可选调试）
+            images_dir = root_image_dir / "images"
+            if images_dir.exists():
+                print(f"✅ 找到 images 目录: {images_dir}")
+            else:
+                print(f"⚠️ 未找到 images 目录: {images_dir}")
+                print(f"   请确认数据集结构: {root_image_dir}/images/*.jpg")
+            break
 
 
 def check_environment():
